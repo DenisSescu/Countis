@@ -1,59 +1,60 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
+import { Stack, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { Text, View } from 'react-native';
+import { ThemeProvider } from '../context/ThemeContext';
+import { initDatabase } from '../db/database';
+import { generateRecurringForCurrentMonth, getSetting, processMonthlyGoalContributions } from '../db/queries';
+import { detectAndSaveRecurringTransactions } from '../db/recurringDetector';
+import { initNotifications } from '../services/notifications';
 
-import { useColorScheme } from '@/components/useColorScheme';
-
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
-
-export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: '(tabs)',
-};
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
-
-export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
-  });
-
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
+function AppContent() {
+  const router = useRouter();
+  const [dbReady, setDbReady] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
+    initDatabase()
+      .then(() => {
+        detectAndSaveRecurringTransactions();
+        generateRecurringForCurrentMonth();
+        processMonthlyGoalContributions();
+        initNotifications();
+        const done = getSetting('onboarding_done');
+        if (done !== 'true') setShowOnboarding(true);
+        setDbReady(true);
+      })
+      .catch((err) => console.error('DB init error:', err));
+  }, []);
+
+  useEffect(() => {
+    if (dbReady && showOnboarding) {
+      router.replace('/onboarding');
     }
-  }, [loaded]);
+  }, [dbReady, showOnboarding]);
 
-  if (!loaded) {
-    return null;
+  if (!dbReady) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <Text>Se încarcă...</Text>
+      </View>
+    );
   }
 
-  return <RootLayoutNav />;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="recurring" />
+      <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="transactions" />
+      <Stack.Screen name="budgets" />
+    </Stack>
+  );
 }
 
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
-
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
+    <ThemeProvider>
+      <AppContent />
     </ThemeProvider>
   );
 }
